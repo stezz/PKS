@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import csv
 from zoneinfo import ZoneInfo
+import pandas as pd
 
 class PksLive:
     """PKS Live API client.
@@ -256,8 +257,8 @@ class InvoicingPeriod:
         """
         if self._total_consumption:
             return self._total_consumption
-        if self.hourly_data:
-            return sum([float(row['Consumption']) for row in self.hourly_data])*1000
+        if self.hourly_data is not None:
+            return self.hourly_data['Consumption'].sum() * 1000
 
     @property
     def total_weighted_spot_price(self):
@@ -304,7 +305,7 @@ class InvoicingPeriod:
         """
         if self._total_spot_cost:
             return self._total_spot_cost
-        return (self.total_spot_price * self.total_consumption)/100
+        return (self.total_spot_price * self.total_consumption) / 100
 
     @property
     def total_fixed_cost(self):
@@ -315,7 +316,7 @@ class InvoicingPeriod:
         """
         if self._total_fixed_cost:
             return self._total_fixed_cost
-        return (self.total_fixed_price * self.total_consumption)/100
+        return (self.total_fixed_price * self.total_consumption) / 100
 
     @property
     def total_weighted_spot_cost(self):
@@ -326,58 +327,58 @@ class InvoicingPeriod:
         """
         if self._total_weighted_spot_cost:
             return self._total_weighted_spot_cost
-            return self._total_weighted_spot_cost
-        return (self.total_weighted_spot_price * self.total_consumption)/100
+        return (self.total_weighted_spot_price * self.total_consumption) / 100
 
     @property
     def average_spot_price(self):
         if self._average_fixed_price:
             return self._average_fixed_price
-        if self.hourly_data:
-            return (sum([float(row['SpotPrice']) for row in self.hourly_data]) / len(self.hourly_data))/10
+        if self.hourly_data is not None:
+            return (self.hourly_data['SpotPrice'].mean() / 10)
 
     @property
     def average_fixed_price(self):
         if self._average_fixed_price:
             return self._average_fixed_price
-        if self.hourly_data:
-            return (sum([float(row['FixedPrice']) for row in self.hourly_data]) / len(self.hourly_data))/10
+        if self.hourly_data is not None:
+            return (self.hourly_data['FixedPrice'].mean() / 10)
 
     @property
     def profile_price(self):
         if self._profile_price:
             return self._profile_price
-        if self.hourly_data:
-            return (sum([float(row['ProfilePrice']) for row in self.hourly_data]) / len(self.hourly_data))/10
+        if self.hourly_data is not None:
+            return (self.hourly_data['ProfilePrice'].mean() / 10)
 
     @property
     def delivery_price(self):
         if self._delivery_price:
             return self._delivery_price
-        if self.hourly_data:
-            return (sum([float(row['DeliveryPrice']) for row in self.hourly_data]) / len(self.hourly_data))/10
+        if self.hourly_data is not None:
+            return (self.hourly_data['DeliveryPrice'].mean() / 10)
 
     @property
     def weighted_spot_price(self):
         if self._weighted_spot_price:
             return self._weighted_spot_price
-        if self.hourly_data:
-            total_cost = sum([float(row['SpotPrice'])*float(row['Consumption']) for row in self.hourly_data])
-            total_consumption = sum([float(row['Consumption']) for row in self.hourly_data])
-            return (total_cost / total_consumption)/10
+        if self.hourly_data is not None:
+            total_cost = (self.hourly_data['SpotPrice'] * self.hourly_data['Consumption']).sum()
+            total_consumption = self.hourly_data['Consumption'].sum()
+            return (total_cost / total_consumption) / 10
 
     def get_with_vat(self, price):
-        return price * (1 + self.vat_percentage/100)
+        return price * (1 + self.vat_percentage / 100)
 
     @property
     def hourly_data(self):
-        if self._hourly_data:
+        if self._hourly_data is not None:
             return self._hourly_data
         try:
             url = f"{self.api_url}/Customer/Invoicing/HourlyData/{self.id}/{self.parent.id}"
             response = self.session.get(url)
             response.raise_for_status()
             self._hourly_data = response.json()
+            self._hourly_data = pd.DataFrame(self._hourly_data)
             return self._hourly_data
         except requests.RequestException as e:
             print(f'ERROR: {e}')
@@ -390,20 +391,15 @@ class InvoicingPeriod:
             return
 
         if not filename:
-            first_timestamp = datetime.strptime(data[0]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
-            last_timestamp = datetime.strptime(data[-1]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            first_timestamp = datetime.strptime(data['TimeStamp'].iloc[0], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=ZoneInfo("UTC"))
+            last_timestamp = datetime.strptime(data['TimeStamp'].iloc[-1], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=ZoneInfo("UTC"))
             first_timestamp = first_timestamp.astimezone(self.time_zone)
             last_timestamp = last_timestamp.astimezone(self.time_zone)
             filename = f"HourlyData_{first_timestamp.strftime('%Y-%m-%d')}-{last_timestamp.strftime('%Y-%m-%d')}.csv"
 
-        with open(filename, 'w', newline='') as csvfile:
-            fieldnames = data[0].keys()
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for row in data:
-                writer.writerow(row)
-
+        data.to_csv(filename, index=False)
         print(f"Hourly data successfully downloaded to {filename}.")
 
 
