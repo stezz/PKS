@@ -390,9 +390,11 @@ class InvoicingPeriod:
             return
 
         if not filename:
-            first_timestamp = datetime.strptime(data[0]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ")
-            last_timestamp = datetime.strptime(data[-1]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ")
-            filename = f"HourlyData_{first_timestamp.strftime('%Y%m%d%H%M')}-{last_timestamp.strftime('%Y%m%d%H%M')}.csv"
+            first_timestamp = datetime.strptime(data[0]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            last_timestamp = datetime.strptime(data[-1]['TimeStamp'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            first_timestamp = first_timestamp.astimezone(self.time_zone)
+            last_timestamp = last_timestamp.astimezone(self.time_zone)
+            filename = f"HourlyData_{first_timestamp.strftime('%Y-%m-%d')}-{last_timestamp.strftime('%Y-%m-%d')}.csv"
 
         with open(filename, 'w', newline='') as csvfile:
             fieldnames = data[0].keys()
