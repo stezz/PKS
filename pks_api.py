@@ -1,9 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-import csv
 from zoneinfo import ZoneInfo
 import pandas as pd
+import aiohttp, asyncio
 
 class PksLive:
     """PKS Live API client.
@@ -160,28 +160,31 @@ class Contract:
         self.api_url = self.parent.api_url
         self.session = self.parent.session
         self.customer = self.parent
-        self._invoicing_periods = None
         self.rawdata = kwargs
+        self._invoicing_periods = None
 
-    @property
-    def invoicing_periods(self):
-        """Get invoicing periods for the contract.
 
-        :return: List of InvoicingPeriod objects
-        :rtype: list
-        """
-        if self._invoicing_periods:
+    async def get_invoicing_periods(self):
+        if self._invoicing_periods is not None:
             return self._invoicing_periods
-        try:
+        async with aiohttp.ClientSession(headers=self.session.headers, cookies=self.session.cookies.get_dict()) as session:
             url = f"{self.api_url}/Periods/InvoicingPeriod/Available"
-            response = self.session.get(url)
-            response.raise_for_status()
-            periods_data = response.json()
-            self._invoicing_periods = [InvoicingPeriod(parent=self, **data) for data in periods_data]
-            return self._invoicing_periods
-        except requests.RequestException as e:
-            print(f'ERROR: {e}')
-            return None
+            async with session.get(url) as response:
+                if response.status == 200:
+                    periods_data = await response.json()
+                    # Concurrently initialize InvoicingPeriod instances
+                    tasks = [self.initialize_invoicing_period(data) for data in periods_data]
+                    self._invoicing_periods = await asyncio.gather(*tasks)
+                    return self._invoicing_periods
+                else:
+                    print(f'ERROR: {response.status}')
+                    return None
+
+    async def initialize_invoicing_period(self, data):
+        period = InvoicingPeriod(parent=self, **data)
+        print(f"Fetching hourly data for {period.description}")
+        await period.get_hourly_data()
+        return period
 
 
     def __repr__(self):
@@ -209,7 +212,7 @@ class InvoicingPeriod:
                     "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC")).astimezone(self.time_zone)
         self.stop = datetime.strptime(kwargs.get('Stop', None),
                     "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC")).astimezone(self.time_zone)
-        self._hourly_data = None
+        self.hourly_data = None
         self.rawdata = kwargs
         self._average_spot_price = None
         self._average_fixed_price = None
@@ -226,6 +229,8 @@ class InvoicingPeriod:
         self._total_fixed_consumption = None
         self._total_open_consumption = None
         self._vat_percentage = None
+        self.session_headers = {k: v for k, v in self.session.headers.items()}
+        self.session_cookies = self.session.cookies.get_dict()
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.id} {self.description})"
@@ -396,18 +401,19 @@ class InvoicingPeriod:
     def get_with_vat(self, price):
         return price * (1 + self.vat_percentage / 100)
 
-    @property
-    def hourly_data(self):
-        if self._hourly_data is not None:
-            return self._hourly_data
+
+    async def get_hourly_data(self):
+        if self.hourly_data is not None:
+            return self.hourly_data
         try:
-            url = f"{self.api_url}/Customer/Invoicing/HourlyData/{self.id}/{self.parent.id}"
-            response = self.session.get(url)
-            response.raise_for_status()
-            self._hourly_data = response.json()
-            self._hourly_data = pd.DataFrame(self._hourly_data)
-            return self._hourly_data
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession(headers=self.session_headers, cookies=self.session_cookies) as session:
+                url = f"{self.api_url}/Customer/Invoicing/HourlyData/{self.id}/{self.parent.id}"
+                async with session.get(url) as response:
+                    #response.raise_for_status()
+                    self.hourly_data = await response.json()
+                    self.hourly_data = pd.DataFrame(self.hourly_data)
+                    return self.hourly_data
+        except aiohttp.ClientResponseError as e:
             print(f'ERROR: {e}')
             return None
 
