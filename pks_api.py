@@ -223,6 +223,8 @@ class InvoicingPeriod:
         self._total_fixed_cost = None
         self._total_weighted_spot_cost = None
         self._total_consumption = None
+        self._total_fixed_consumption = None
+        self._total_open_consumption = None
         self._vat_percentage = None
 
     def __repr__(self):
@@ -259,6 +261,31 @@ class InvoicingPeriod:
             return self._total_consumption
         if self.hourly_data is not None:
             return self.hourly_data['Consumption'].sum() * 1000
+
+    @property
+    def total_fixed_consumption(self):
+        """Get the total consumption for the invoicing period.
+
+        :return: Total consumption
+        :rtype: float
+        """
+        if self._total_fixed_consumption:
+            return self._total_fixed_consumption
+        if self.hourly_data is not None:
+            return self.hourly_data['FixedConsumption'].sum() * 1000
+
+
+    @property
+    def total_open_consumption(self):
+        """Get the total consumption for the invoicing period.
+
+        :return: Total consumption
+        :rtype: float
+        """
+        if self._total_open_consumption:
+            return self._total_open_consumption
+        if self.hourly_data is not None:
+            return self.hourly_data['OpenConsumption'].sum() * 1000
 
     @property
     def total_weighted_spot_price(self):
