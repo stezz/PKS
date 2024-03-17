@@ -14,26 +14,39 @@ poetry install
 ```
 
 ## Usage
+
 ```python
 from pks_api import PksLive
 from pprint import pprint
+import aiohttp, asyncio
 
 username = "user"
 password = "password"
 
-pks = PksLive(username, password)
 
-# get your customer
-customer = pks.get_customer_info()
-# Get your contract
-contract = customer.contracts[0]
+async def main():
+    pks = PksLive(username, password)
 
-# Get the info about your invoicing (with VAT)
-for period in contract.invoicing_periods:
-    fixed_price = period.get_with_vat(period.average_fixed_price)
-    spot_price = period.get_with_vat(period.average_spot_price)
-    weighted_spot_price = period.get_with_vat(period.weighted_spot_price)
-    total_fixed_cost = period.get_with_vat(period.total_fixed_cost)
-    total_spot_cost = period.get_with_vat(period.total_spot_cost)
-    total_weighted_spot_cost = period.get_with_vat(period.total_weighted_spot_cost)
+    customer = pks.get_customer_info()
+    contract = customer.contracts[0]
+    total_spend_fixed = 0
+    total_spend_spot = 0
+    periods = await contract.get_invoicing_periods()
+    for period in periods:
+        fixed_price = period.get_with_vat(period.average_fixed_price)
+        spot_price = period.get_with_vat(period.average_spot_price)
+        weighted_spot_price = period.get_with_vat(period.weighted_spot_price)
+        total_fixed_cost = period.get_with_vat(period.total_fixed_cost)
+        total_spot_cost = period.get_with_vat(period.total_spot_cost)
+        total_weighted_spot_cost = period.get_with_vat(period.total_weighted_spot_cost)
+        if total_fixed_cost > 0:
+            total_spend_fixed += total_fixed_cost
+            total_spend_spot += total_spot_cost
+        period_start = datetime.strftime(period.start, "%Y-%m-%d")
+        period_stop = datetime.strftime(period.stop, "%Y-%m-%d")
+
+
+# Run the async main function
+if __name__ == "__main__":
+    asyncio.run(main())
 ```

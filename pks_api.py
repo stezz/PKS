@@ -4,6 +4,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
 import aiohttp, asyncio
+import os
+CACHE_DIR = "cache"
 
 class PksLive:
     """PKS Live API client.
@@ -222,9 +224,9 @@ class InvoicingPeriod:
         self._total_spot_price = None
         self._total_weighted_spot_price = None
         self._total_fixed_price = None
-        self._total_spot_cost = None
-        self._total_fixed_cost = None
-        self._total_weighted_spot_cost = None
+        self._open_consumption_cost = None
+        self._fixed_consumption_cost = None
+        self._what_if_spot_cost = None
         self._total_consumption = None
         self._total_fixed_consumption = None
         self._total_open_consumption = None
@@ -329,37 +331,31 @@ class InvoicingPeriod:
             return 0
 
     @property
-    def total_spot_cost(self):
-        """Get the total spot cost for the invoicing period.
+    def what_if_spot_cost(self):
+        """Get the total spot cost for the invoicing period if the consumption was fully open.
 
         :return: Total spot cost
         :rtype: float
         """
-        if self._total_spot_cost:
-            return self._total_spot_cost
-        return (self.total_spot_price * self.total_consumption) / 100
+        if self._what_if_spot_cost:
+            return self._what_if_spot_cost
+        fully_charged_price = self.hourly_data['SpotPrice'] + self.hourly_data['DeliveryPrice'] + self.hourly_data['ProfilePrice']
+        return (self.hourly_data['Consumption'] * fully_charged_price).sum()
+
 
     @property
-    def total_fixed_cost(self):
-        """Get the total fixed cost for the invoicing period.
-
-        :return: Total fixed cost
-        :rtype: float
-        """
-        if self._total_fixed_cost:
-            return self._total_fixed_cost
-        return (self.total_fixed_price * self.total_consumption) / 100
+    def open_consumption_cost(self):
+        if self._open_consumption_cost:
+            return self._open_consumption_cost
+        fully_charged_price = self.hourly_data['SpotPrice'] + self.hourly_data['DeliveryPrice'] + self.hourly_data['ProfilePrice']
+        return (self.hourly_data['OpenConsumption'] * fully_charged_price).sum()
 
     @property
-    def total_weighted_spot_cost(self):
-        """Get the total weighted spot cost for the invoicing period.
-
-        :return: Total weighted spot cost
-        :rtype: float
-        """
-        if self._total_weighted_spot_cost:
-            return self._total_weighted_spot_cost
-        return (self.total_weighted_spot_price * self.total_consumption) / 100
+    def fixed_consumption_cost(self):
+        if self._fixed_consumption_cost:
+            return self._fixed_consumption_cost
+        fully_charged_price = self.hourly_data['FixedPrice'] + self.hourly_data['DeliveryPrice'] + self.hourly_data['ProfilePrice']
+        return (self.hourly_data['FixedConsumption'] * fully_charged_price ).sum()
 
     @property
     def average_spot_price(self):
@@ -401,17 +397,34 @@ class InvoicingPeriod:
     def get_with_vat(self, price):
         return price * (1 + self.vat_percentage / 100)
 
-
     async def get_hourly_data(self):
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+        cache_file = os.path.join(CACHE_DIR, f"{self.description}-cache.pkl")
+        current_month = f"{datetime.now().month}.{datetime.now().year}"
+        self.current_month = f"{self.start.month}.{self.start.year}"
         if self.hourly_data is not None:
             return self.hourly_data
+        if os.path.exists(cache_file):
+            cache_data = pd.read_pickle(cache_file)
+            last_data = datetime.strptime(cache_data['TimeStamp'].iloc[-1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC")).astimezone(self.time_zone)
+            # Check if the cached data of the previous month is having data until the last hour of the last day of the month
+            if self.current_month != current_month and last_data.strftime('%Y-%m-%d') == self.stop.strftime('%Y-%m-%d'):
+                print("Using cached hourly data for", self.description)
+                self.hourly_data = cache_data
+                return self.hourly_data
+            else:
+                print("The cached data is not complete for", self.description)
+        #Otherwise, fetch the data from the server
         try:
             async with aiohttp.ClientSession(headers=self.session_headers, cookies=self.session_cookies) as session:
                 url = f"{self.api_url}/Customer/Invoicing/HourlyData/{self.id}/{self.parent.id}"
                 async with session.get(url) as response:
                     #response.raise_for_status()
                     self.hourly_data = await response.json()
+                    print("Fetched hourly data from server for", self.description)
                     self.hourly_data = pd.DataFrame(self.hourly_data)
+                    self.hourly_data.to_pickle(cache_file)
                     return self.hourly_data
         except aiohttp.ClientResponseError as e:
             print(f'ERROR: {e}')
